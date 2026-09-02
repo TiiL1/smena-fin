@@ -1,0 +1,108 @@
+# Смены · Финансы — сервер
+
+Бэкенд + бот для Mini App: данные хранятся в базе (не в браузере), поэтому
+ничего не теряется при смене телефона или очистке кэша. Бот пишет
+напоминания 25-го и 10-го числа.
+
+Всё бесплатно: [Neon](https://neon.tech) (база данных, бесплатно навсегда,
+без карты) + [Render](https://render.com) (сам сервер, бесплатный тариф) +
+[GitHub](https://github.com) (хранит код и раз в две недели «будит» сервер
+для напоминаний).
+
+## Разово, по шагам
+
+### 1. База данных — Neon
+
+1. Зарегистрируйся на [neon.tech](https://neon.tech) (можно через Google).
+2. Создай проект (Create a project) — любое название.
+3. На странице проекта найди **Connection string**, выбери вариант
+   **pooled connection** и скопируй. Выглядит так:
+   `postgresql://user:password@ep-xxx-pooler.region.aws.neon.tech/neondb?sslmode=require`
+4. В начало строки поменяй `postgresql://` на `postgresql+psycopg://` —
+   это и есть значение для `DATABASE_URL`. Сохрани куда-нибудь, пригодится
+   на шаге 3.
+
+### 2. Код — GitHub
+
+1. Зарегистрируйся на [github.com](https://github.com), если ещё нет аккаунта.
+2. Создай новый пустой репозиторий (New repository), например `smena-fin`.
+   Не добавляй README/лицензию при создании — репозиторий должен быть пустым.
+3. У себя в терминале, в папке `server` (эта самая, где ты читаешь этот файл):
+   ```bash
+   git init
+   git add .
+   git commit -m "Первая версия"
+   git branch -M main
+   git remote add origin https://github.com/ТВОЙ_НИК/smena-fin.git
+   git push -u origin main
+   ```
+   `.venv`, `.env` и файлы базы данных туда не попадут — это уже настроено
+   в `.gitignore`.
+
+### 3. Сервер — Render
+
+1. Зарегистрируйся на [render.com](https://render.com) (тоже можно через GitHub —
+   так он сразу увидит твои репозитории).
+2. **New → Blueprint**, выбери репозиторий `smena-fin`. Render сам найдёт
+   `render.yaml` и предложит создать сервис на бесплатном тарифе.
+3. Он попросит заполнить переменные окружения:
+   - `BOT_TOKEN` — токен твоего бота от @BotFather.
+   - `DATABASE_URL` — строка из шага 1 (с `postgresql+psycopg://`).
+   - `WEBAPP_URL` — пока оставь пустым, заполнишь через минуту.
+   - `TELEGRAM_WEBHOOK_SECRET` и `CRON_SECRET` — придумай любые две длинные
+     случайные строки (просто набор букв/цифр), в них смысла нет, это просто
+     пароли, чтобы левые запросы не долетали до бота.
+4. Нажми Deploy, подожди пару минут. Render выдаст адрес вида
+   `https://smena-fin-xxxx.onrender.com` — это и есть твой `WEBAPP_URL`.
+5. Вернись в настройки сервиса (Environment) и впиши этот адрес в
+   `WEBAPP_URL`. Сервис перезапустится и сам зарегистрирует адрес в
+   Telegram — руками в BotFather для этого ничего делать не нужно.
+
+Первое открытие приложения после долгого простоя (бесплатный тариф
+«засыпает» без активности) может занять до минуты — это нормально,
+сервер просыпается.
+
+### 4. Напоминания — GitHub Actions
+
+1. В репозитории на GitHub: Settings → Secrets and variables → Actions →
+   New repository secret. Добавь два:
+   - `APP_URL` — тот же адрес, что и `WEBAPP_URL` (без слэша на конце).
+   - `CRON_SECRET` — то же значение, что ты придумал для Render на шаге 3.
+2. Всё, workflow `.github/workflows/reminders.yml` уже в репозитории и
+   сработает сам 25-го и 10-го. Проверить не дожидаясь даты: вкладка
+   **Actions** → **Payout reminders** → **Run workflow**.
+
+### 5. Бот в Telegram
+
+Открой своего бота и напиши `/start` — придёт приветствие с кнопкой
+«Открыть приложение». Дополнительно можно (не обязательно, но удобно)
+задать постоянную кнопку снизу экрана: у **@BotFather** → `/mybots` →
+выбери бота → Bot Settings → Menu Button → Configure menu button →
+пришли тот же `WEBAPP_URL`.
+
+Чтобы бот мог писать первым (напоминания), нужно хотя бы раз нажать
+`/start` — это правило самого Telegram, ботам нельзя первыми писать
+тем, кто с ними ни разу не общался.
+
+## Если что-то поменяешь во фронтенде
+
+Собери заново (`npm run build` в папке фронтенда), скопируй содержимое
+`dist/` в `server/static/`, закоммить и запушь — Render передеплоит
+сам при пуше в `main`.
+
+## Локальный запуск для проверки
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # и заполни своими значениями
+uvicorn app.main:app --reload
+```
+
+## Тесты
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
