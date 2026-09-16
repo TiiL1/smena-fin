@@ -169,6 +169,23 @@ def top_up_goal(
     return _state_out(user)
 
 
+@router.post("/goals/{goal_id}/withdraw", response_model=schemas.StateOut)
+def withdraw_from_goal(
+    goal_id: int,
+    body: schemas.WithdrawIn,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    user = crud.get_or_create_user(db, user_id)
+    goal = _get_goal_or_404(user, goal_id)
+    try:
+        crud.withdraw_from_goal(db, user, goal, body.amount)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.refresh(user)
+    return _state_out(user)
+
+
 @router.patch("/settings", response_model=schemas.StateOut)
 def update_settings(
     body: schemas.SettingsPatchIn,

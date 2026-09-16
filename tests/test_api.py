@@ -286,3 +286,68 @@ def test_expense_of_other_user_is_404():
         expense_id = r.json()["expenses"][0]["id"]
         r = c.delete(f"/api/expenses/{expense_id}", headers=h2)
         assert r.status_code == 404
+
+
+def test_withdraw_from_goal_returns_money_to_balance():
+    with client() as c:
+        h = auth_header(USER + 17)
+        c.post("/api/payout", json={"actualAmount": 50000}, headers=h)
+        r = c.post("/api/split", headers=h)
+        body = r.json()
+        assert body["unallocatedBalance"] < 50000
+        goal = next(g for g in body["goals"] if g["currentAmount"] > 0)
+        goal_id = goal["id"]
+        before_balance = body["unallocatedBalance"]
+        before_goal = goal["currentAmount"]
+
+        r = c.post(f"/api/goals/{goal_id}/withdraw", json={"amount": 5000}, headers=h)
+        assert r.status_code == 200
+        body = r.json()
+        goal_after = next(g for g in body["goals"] if g["id"] == goal_id)
+        assert goal_after["currentAmount"] == before_goal - 5000
+        assert body["unallocatedBalance"] == before_balance + 5000
+
+
+def test_withdraw_full_goal_amount():
+    with client() as c:
+        h = auth_header(USER + 18)
+        c.post("/api/payout", json={"actualAmount": 50000}, headers=h)
+        r = c.post("/api/split", headers=h)
+        goal = next(g for g in r.json()["goals"] if g["currentAmount"] > 0)
+        r = c.post(f"/api/goals/{goal['id']}/withdraw", json={"amount": goal["currentAmount"]}, headers=h)
+        assert r.status_code == 200
+        goal_after = next(g for g in r.json()["goals"] if g["id"] == goal["id"])
+        assert goal_after["currentAmount"] == 0
+
+
+def test_withdraw_more_than_saved_is_rejected():
+    with client() as c:
+        h = auth_header(USER + 19)
+        c.post("/api/payout", json={"actualAmount": 50000}, headers=h)
+        r = c.post("/api/split", headers=h)
+        goal = next(g for g in r.json()["goals"] if g["currentAmount"] > 0)
+        r = c.post(
+            f"/api/goals/{goal['id']}/withdraw", json={"amount": goal["currentAmount"] + 1000}, headers=h
+        )
+        assert r.status_code == 400
+
+
+def test_withdraw_zero_is_rejected():
+    with client() as c:
+        h = auth_header(USER + 20)
+        c.post("/api/payout", json={"actualAmount": 50000}, headers=h)
+        r = c.post("/api/split", headers=h)
+        goal = next(g for g in r.json()["goals"] if g["currentAmount"] > 0)
+        r = c.post(f"/api/goals/{goal['id']}/withdraw", json={"amount": 0}, headers=h)
+        assert r.status_code == 400
+
+
+def test_withdraw_goal_of_other_user_is_404():
+    with client() as c:
+        h1 = auth_header(USER + 21)
+        h2 = auth_header(USER + 22)
+        c.post("/api/payout", json={"actualAmount": 50000}, headers=h1)
+        r = c.post("/api/split", headers=h1)
+        goal = next(g for g in r.json()["goals"] if g["currentAmount"] > 0)
+        r = c.post(f"/api/goals/{goal['id']}/withdraw", json={"amount": 1000}, headers=h2)
+        assert r.status_code == 404

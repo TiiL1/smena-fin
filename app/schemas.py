@@ -102,6 +102,10 @@ class TopUpIn(CamelModel):
     amount: float
 
 
+class WithdrawIn(CamelModel):
+    amount: float
+
+
 class SettingsPatchIn(CamelModel):
     rate: float | None = None
     default_advance: float | None = None

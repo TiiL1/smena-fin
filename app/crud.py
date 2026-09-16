@@ -119,6 +119,21 @@ def top_up_goal(db: Session, user: models.User, goal: models.Goal, amount: float
     db.commit()
 
 
+def withdraw_from_goal(db: Session, user: models.User, goal: models.Goal, amount: float) -> None:
+    """Returns part (or all) of a goal's savings back to the unallocated
+    balance — the reverse of a top-up/split. The negative contribution keeps
+    the goal's pace projection honest after the money is taken back."""
+    amount = round(amount)
+    if amount <= 0:
+        raise ValueError("Сумма возврата должна быть больше нуля")
+    if amount > goal.current_amount:
+        raise ValueError("В цели нет столько денег")
+    goal.current_amount -= amount
+    user.unallocated_balance += amount
+    db.add(models.GoalContribution(goal_id=goal.id, amount=-amount))
+    db.commit()
+
+
 def goal_projection(goal: models.Goal) -> salary.GoalProjection:
     contributions = [{"amount": c.amount, "date": c.created_at.date()} for c in goal.contributions]
     # Rows added before this feature existed may have no created_at on file;
