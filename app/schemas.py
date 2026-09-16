@@ -23,6 +23,14 @@ class TransactionOut(CamelModel):
     received_at: datetime
 
 
+class GoalProjectionOut(CamelModel):
+    pace_monthly: float
+    required_monthly: float | None
+    eta_date: str | None
+    on_track: bool | None
+    reached: bool
+
+
 class GoalOut(CamelModel):
     id: int
     name: str
@@ -30,6 +38,8 @@ class GoalOut(CamelModel):
     target_amount: float
     current_amount: float
     split_percent: float
+    target_date: str | None
+    projection: GoalProjectionOut
 
 
 class SettingsOut(CamelModel):
@@ -37,10 +47,27 @@ class SettingsOut(CamelModel):
     default_advance: float
 
 
+class ExpenseOut(CamelModel):
+    id: int
+    amount: float
+    category: str
+    note: str
+    spent_at: str
+
+
+class FixedCostOut(CamelModel):
+    id: int
+    name: str
+    amount: float
+    day: int
+
+
 class StateOut(CamelModel):
     shifts: list[ShiftOut]
     transactions: list[TransactionOut]
     goals: list[GoalOut]
+    expenses: list[ExpenseOut]
+    fixed_costs: list[FixedCostOut]
     unallocated_balance: float
     employer_debt: float
     settings: SettingsOut
@@ -52,6 +79,7 @@ class CycleShiftIn(CamelModel):
 
 class PayoutIn(CamelModel):
     actual_amount: float
+    type: str | None = None  # 'advance' | 'salary' — overrides the auto-picked one
 
 
 class GoalIn(CamelModel):
@@ -59,6 +87,7 @@ class GoalIn(CamelModel):
     icon: str
     target_amount: float
     split_percent: float = 0
+    target_date: str | None = None
 
 
 class GoalPatchIn(CamelModel):
@@ -66,6 +95,7 @@ class GoalPatchIn(CamelModel):
     icon: str | None = None
     target_amount: float | None = None
     split_percent: float | None = None
+    target_date: str | None = None
 
 
 class TopUpIn(CamelModel):
@@ -75,3 +105,22 @@ class TopUpIn(CamelModel):
 class SettingsPatchIn(CamelModel):
     rate: float | None = None
     default_advance: float | None = None
+
+
+class ExpenseIn(CamelModel):
+    amount: float
+    category: str = ""
+    note: str = ""
+    spent_at: str | None = None  # 'YYYY-MM-DD', defaults to today
+
+
+class FixedCostIn(CamelModel):
+    name: str
+    amount: float
+    day: int = 1
+
+
+class FixedCostPatchIn(CamelModel):
+    name: str | None = None
+    amount: float | None = None
+    day: int | None = None

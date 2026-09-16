@@ -72,6 +72,16 @@ async def cron_reminders(token: str | None = None):
     return {"sent": sent}
 
 
+@app.post("/api/cron/weekly")
+async def cron_weekly(token: str | None = None):
+    if not config.CRON_SECRET or token != config.CRON_SECRET:
+        raise HTTPException(status_code=401, detail="Bad token")
+    if not bot:
+        raise HTTPException(status_code=503, detail="Bot is not configured")
+    sent = await bot_module.send_weekly_digest(bot)
+    return {"sent": sent}
+
+
 static_dir = Path(__file__).resolve().parent.parent / "static"
 if static_dir.exists():
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")

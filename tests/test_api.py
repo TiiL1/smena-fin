@@ -132,3 +132,157 @@ def test_goal_not_owned_by_user_is_404():
         goal_id = r.json()["goals"][0]["id"]
         r = c.patch(f"/api/goals/{goal_id}", json={"name": "Hacked"}, headers=h2)
         assert r.status_code == 404
+
+
+def test_goal_target_date_projection_and_clearing():
+    with client() as c:
+        h = auth_header(USER + 6)
+        c.post("/api/payout", json={"actualAmount": 50000}, headers=h)  # seed a balance
+
+        r = c.post(
+            "/api/goals",
+            json={
+                "name": "Отпуск",
+                "icon": "plane",
+                "targetAmount": 100000,
+                "splitPercent": 0,
+                "targetDate": "2026-12-01",
+            },
+            headers=h,
+        )
+        assert r.status_code == 200
+        goal = next(g for g in r.json()["goals"] if g["name"] == "Отпуск")
+        assert goal["targetDate"] == "2026-12-01"
+        assert goal["projection"]["reached"] is False
+        assert goal["projection"]["requiredMonthly"] is not None
+
+        goal_id = goal["id"]
+        r = c.post(f"/api/goals/{goal_id}/topup", json={"amount": 20000}, headers=h)
+        goal = next(g for g in r.json()["goals"] if g["id"] == goal_id)
+        assert goal["currentAmount"] == 20000
+        assert goal["projection"]["paceMonthly"] >= 0
+
+        r = c.patch(f"/api/goals/{goal_id}", json={"targetDate": None}, headers=h)
+        goal = next(g for g in r.json()["goals"] if g["id"] == goal_id)
+        assert goal["targetDate"] is None
+        assert goal["projection"]["requiredMonthly"] is None
+        assert goal["projection"]["onTrack"] is None
+
+
+def test_goal_reached_projection():
+    with client() as c:
+        h = auth_header(USER + 7)
+        c.post("/api/payout", json={"actualAmount": 100000}, headers=h)
+        r = c.post(
+            "/api/goals",
+            json={"name": "Мелочь", "icon": "gift", "targetAmount": 1000, "splitPercent": 0},
+            headers=h,
+        )
+        goal_id = next(g for g in r.json()["goals"] if g["name"] == "Мелочь")["id"]
+        r = c.post(f"/api/goals/{goal_id}/topup", json={"amount": 1000}, headers=h)
+        goal = next(g for g in r.json()["goals"] if g["id"] == goal_id)
+        assert goal["currentAmount"] == goal["targetAmount"]
+        assert goal["projection"]["reached"] is True
+        assert goal["projection"]["onTrack"] is True
+
+
+def test_manual_payout_type_lets_you_log_an_overdue_salary(monkeypatch):
+    # Sep 12: auto-suggestion has moved on to "advance", but August's salary
+    # was never logged — the person should still be able to force "salary".
+    monkeypatch.setattr(crud.config, "today", lambda: date(2026, 9, 12))
+    with client() as c:
+        h = auth_header(USER + 8)
+        for d in range(1, 21):
+            c.post("/api/shifts/cycle", json={"date": f"2026-08-{d:02d}"}, headers=h)
+        c.post("/api/payout", json={"actualAmount": 80000, "type": "advance"}, headers=h)
+
+        r = c.post("/api/payout", json={"actualAmount": 90000, "type": "salary"}, headers=h)
+        assert r.status_code == 200
+        tx = r.json()["transactions"][-1]
+        assert tx["type"] == "salary"
+        assert tx["forMonth"] == "2026-08"
+
+
+def test_duplicate_payout_for_same_period_is_rejected(monkeypatch):
+    monkeypatch.setattr(crud.config, "today", lambda: date(2026, 8, 20))
+    with client() as c:
+        h = auth_header(USER + 9)
+        c.post("/api/payout", json={"actualAmount": 80000}, headers=h)
+        r = c.post("/api/payout", json={"actualAmount": 80000}, headers=h)
+        assert r.status_code == 409
+
+
+def test_expense_flow_spends_and_refunds_balance():
+    with client() as c:
+        h = auth_header(USER + 10)
+        c.post("/api/payout", json={"actualAmount": 50000}, headers=h)
+
+        r = c.post(
+            "/api/expenses",
+            json={"amount": 3500, "category": "Еда", "note": "обед"},
+            headers=h,
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["expenses"]) == 1
+        assert body["expenses"][0]["category"] == "Еда"
+        assert body["unallocatedBalance"] == 46500
+
+        expense_id = body["expenses"][0]["id"]
+        r = c.delete(f"/api/expenses/{expense_id}", headers=h)
+        body = r.json()
+        assert body["expenses"] == []
+        assert body["unallocatedBalance"] == 50000
+
+
+def test_expense_validation_rejects_zero_amount():
+    with client() as c:
+        h = auth_header(USER + 11)
+        r = c.post("/api/expenses", json={"amount": 0, "category": "Еда"}, headers=h)
+        assert r.status_code == 400
+
+
+def test_fixed_cost_crud():
+    with client() as c:
+        h = auth_header(USER + 12)
+        r = c.post("/api/fixed-costs", json={"name": "Аренда", "amount": 120000, "day": 5}, headers=h)
+        assert r.status_code == 200
+        assert r.json()["fixedCosts"][0]["name"] == "Аренда"
+
+        cost_id = r.json()["fixedCosts"][0]["id"]
+        r = c.patch(f"/api/fixed-costs/{cost_id}", json={"amount": 130000}, headers=h)
+        assert r.json()["fixedCosts"][0]["amount"] == 130000
+
+        r = c.delete(f"/api/fixed-costs/{cost_id}", headers=h)
+        assert r.json()["fixedCosts"] == []
+
+
+def test_fixed_cost_validation_rejects_empty_name():
+    with client() as c:
+        h = auth_header(USER + 13)
+        r = c.post("/api/fixed-costs", json={"name": "", "amount": 1000, "day": 1}, headers=h)
+        assert r.status_code == 400
+
+
+def test_reset_clears_expenses_and_fixed_costs():
+    with client() as c:
+        h = auth_header(USER + 14)
+        c.post("/api/payout", json={"actualAmount": 50000}, headers=h)
+        c.post("/api/expenses", json={"amount": 1000, "category": "Еда"}, headers=h)
+        c.post("/api/fixed-costs", json={"name": "Аренда", "amount": 50000, "day": 5}, headers=h)
+        r = c.post("/api/reset", headers=h)
+        body = r.json()
+        assert body["expenses"] == []
+        assert body["fixedCosts"] == []
+        assert body["unallocatedBalance"] == 0
+
+
+def test_expense_of_other_user_is_404():
+    with client() as c:
+        h1 = auth_header(USER + 15)
+        h2 = auth_header(USER + 16)
+        c.post("/api/payout", json={"actualAmount": 50000}, headers=h1)
+        r = c.post("/api/expenses", json={"amount": 1000, "category": "Еда"}, headers=h1)
+        expense_id = r.json()["expenses"][0]["id"]
+        r = c.delete(f"/api/expenses/{expense_id}", headers=h2)
+        assert r.status_code == 404

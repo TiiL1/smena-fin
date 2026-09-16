@@ -1,9 +1,11 @@
-name: Payout reminders
+name: Reminders
 
 on:
   schedule:
     # 05:00 UTC = 10:00 Asia/Almaty (UTC+5, no DST) on the 10th and 25th
     - cron: "0 5 10,25 * *"
+    # Mondays 05:00 UTC = 10:00 Asia/Almaty — weekly money digest
+    - cron: "0 5 * * 1"
   workflow_dispatch: {}
 
 jobs:
@@ -12,3 +14,10 @@ jobs:
     steps:
       - name: Trigger reminder check
         run: curl -fsS "${{ secrets.APP_URL }}/api/cron/reminders?secret=${{ secrets.CRON_SECRET }}"
+      - name: Trigger weekly digest (Mondays only)
+        run: |
+          if [ "$(date -u +%u)" = "1" ]; then
+            curl -fsS "${{ secrets.APP_URL }}/api/cron/weekly?secret=${{ secrets.CRON_SECRET }}"
+          else
+            echo "Not Monday — skipping weekly digest."
+          fi

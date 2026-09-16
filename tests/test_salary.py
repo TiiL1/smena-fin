@@ -1,6 +1,8 @@
 from datetime import date
 
-from app.salary import get_next_payout_event
+import pytest
+
+from app.salary import find_pending_salary_month, get_next_payout_event, goal_projection, payout_event_for_type
 
 
 def test_advance_then_salary_with_underpaid_debt():
@@ -52,3 +54,137 @@ def test_event_due_exactly_today_counts_as_next():
     assert ev.date == "2026-08-25"
     ev2 = get_next_payout_event(date(2026, 9, 10), [], [], 8650, 80000, 0)
     assert ev2.date == "2026-09-10"
+
+
+# --- manual payout-type override -------------------------------------------------
+
+
+def test_manual_advance_override_always_uses_current_month():
+    # Even mid-cycle (auto-suggestion here would be "salary"), forcing
+    # "advance" should compute the advance for the current calendar month.
+    ev = payout_event_for_type("advance", date(2026, 9, 5), [], [], 8650, 80000, 0)
+    assert ev.type == "advance"
+    assert ev.for_month == "2026-09"
+    assert ev.calculated_amount == 80000
+
+
+def test_find_pending_salary_month_skips_already_paid_months():
+    shifts = [{"date": "2026-07-05", "coefficient": 1}, {"date": "2026-08-05", "coefficient": 1}]
+    transactions = [{"type": "salary", "for_month": "2026-07", "actual_amount": 100000}]
+    # Today is Sep 12 (past the 10th, auto-suggestion would already be "advance"),
+    # but August's salary was never logged -> that's the pending one, not July.
+    pending = find_pending_salary_month(date(2026, 9, 12), shifts, transactions)
+    assert pending == "2026-08"
+
+
+def test_find_pending_salary_month_when_nothing_is_pending_falls_back_to_last_month():
+    shifts = [{"date": "2026-08-05", "coefficient": 1}]
+    transactions = [{"type": "salary", "for_month": "2026-08", "actual_amount": 1}]
+    pending = find_pending_salary_month(date(2026, 9, 12), shifts, transactions)
+    assert pending == "2026-08"
+
+
+def test_find_pending_salary_month_ignores_months_nobody_worked():
+    # No shifts at all yet -> nothing is genuinely "pending", just show the
+    # most recently ended month as a sensible default.
+    pending = find_pending_salary_month(date(2026, 9, 12), [], [])
+    assert pending == "2026-08"
+
+
+def test_manual_salary_override_after_the_10th_finds_the_overdue_month():
+    shifts = [{"date": f"2026-08-{d:02d}", "coefficient": 1} for d in range(1, 21)]
+    transactions = [{"type": "advance", "for_month": "2026-08", "actual_amount": 80000}]
+    # Sep 12: auto-suggestion has already moved on to "advance", but the person
+    # hasn't received August's salary yet -> manual override should still find it.
+    ev = payout_event_for_type("salary", date(2026, 9, 12), shifts, transactions, 8650, 80000, 0)
+    assert ev.type == "salary"
+    assert ev.for_month == "2026-08"
+    assert ev.calculated_amount == 20 * 8650 - 80000
+
+
+# --- goal target-date projection --------------------------------------------------
+
+
+def test_goal_already_reached():
+    proj = goal_projection(
+        today=date(2026, 9, 1),
+        current_amount=100_000,
+        target_amount=100_000,
+        target_date=None,
+        created_at=date(2026, 1, 1),
+        contributions=[],
+    )
+    assert proj.reached is True
+    assert proj.on_track is True
+    assert proj.eta_date is None
+
+
+def test_goal_with_no_contributions_has_no_eta():
+    proj = goal_projection(
+        today=date(2026, 9, 1),
+        current_amount=0,
+        target_amount=100_000,
+        target_date=None,
+        created_at=date(2026, 8, 1),
+        contributions=[],
+    )
+    assert proj.reached is False
+    assert proj.pace_monthly == 0
+    assert proj.eta_date is None
+    assert proj.required_monthly is None
+    assert proj.on_track is None
+
+
+def test_goal_pace_projects_a_future_eta():
+    proj = goal_projection(
+        today=date(2026, 9, 1),
+        current_amount=20_000,
+        target_amount=100_000,
+        target_date=None,
+        created_at=date(2026, 7, 3),  # 60 days before "today"
+        contributions=[{"amount": 10_000, "date": date(2026, 8, 2)}],  # 30 days before "today"
+    )
+    expected_pace = (10_000 / 60) * 30.44
+    assert proj.pace_monthly == pytest.approx(expected_pace)
+    assert proj.eta_date is not None
+    assert proj.eta_date > "2026-09-01"
+
+
+def test_goal_on_track_when_pace_beats_required():
+    proj = goal_projection(
+        today=date(2026, 9, 1),
+        current_amount=0,
+        target_amount=10_000,
+        target_date="2026-10-01",
+        created_at=date(2026, 8, 1),
+        contributions=[{"amount": 12_000, "date": date(2026, 8, 15)}],
+    )
+    assert proj.required_monthly == pytest.approx(10_000, rel=0.05)
+    assert proj.pace_monthly > proj.required_monthly
+    assert proj.on_track is True
+
+
+def test_goal_behind_schedule_when_pace_below_required():
+    proj = goal_projection(
+        today=date(2026, 9, 1),
+        current_amount=0,
+        target_amount=100_000,
+        target_date="2026-10-01",
+        created_at=date(2026, 8, 1),
+        contributions=[{"amount": 1_000, "date": date(2026, 8, 15)}],
+    )
+    assert proj.pace_monthly < proj.required_monthly
+    assert proj.on_track is False
+
+
+def test_goal_target_date_already_passed_is_never_on_track():
+    proj = goal_projection(
+        today=date(2026, 9, 1),
+        current_amount=50_000,
+        target_amount=100_000,
+        target_date="2026-08-01",
+        created_at=date(2026, 1, 1),
+        contributions=[{"amount": 50_000, "date": date(2026, 8, 15)}],
+    )
+    assert proj.on_track is False
+    assert proj.required_monthly == 50_000

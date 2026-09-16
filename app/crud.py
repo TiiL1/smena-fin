@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -29,8 +29,18 @@ def _state_dicts(user: models.User) -> tuple[list[dict], list[dict]]:
     return shifts, transactions
 
 
-def next_payout_event(user: models.User) -> salary.PayoutEvent:
+def next_payout_event(user: models.User, requested_type: str | None = None) -> salary.PayoutEvent:
     shifts, transactions = _state_dicts(user)
+    if requested_type is not None:
+        return salary.payout_event_for_type(
+            requested_type=requested_type,
+            today=config.today(),
+            shifts=shifts,
+            transactions=transactions,
+            rate=user.rate,
+            default_advance=user.default_advance,
+            employer_debt=user.employer_debt,
+        )
     return salary.get_next_payout_event(
         today=config.today(),
         shifts=shifts,
@@ -52,8 +62,21 @@ def cycle_shift(db: Session, user: models.User, date_key: str) -> None:
     db.commit()
 
 
-def receive_payout(db: Session, user: models.User, actual_amount: float) -> models.Transaction:
-    event = next_payout_event(user)
+class DuplicatePayoutError(Exception):
+    pass
+
+
+def receive_payout(
+    db: Session, user: models.User, actual_amount: float, requested_type: str | None = None
+) -> models.Transaction:
+    event = next_payout_event(user, requested_type)
+    already = next(
+        (t for t in user.transactions if t.type == event.type and t.for_month == event.for_month), None
+    )
+    if already is not None:
+        raise DuplicatePayoutError(
+            f"{salary.describe_payout_type(event.type)} за {event.for_month} уже внесена."
+        )
     debt_after = event.calculated_amount - actual_amount
     tx = models.Transaction(
         user_id=user.telegram_id,
@@ -80,7 +103,9 @@ def split_balance(db: Session, user: models.User) -> None:
     for g in user.goals:
         portion = int((user.unallocated_balance * g.split_percent * scale) // 100)
         remaining -= portion
-        g.current_amount += portion
+        if portion > 0:
+            g.current_amount += portion
+            db.add(models.GoalContribution(goal_id=g.id, amount=portion))
     user.unallocated_balance = max(remaining, 0)
     db.commit()
 
@@ -90,7 +115,27 @@ def top_up_goal(db: Session, user: models.User, goal: models.Goal, amount: float
         return
     goal.current_amount += amount
     user.unallocated_balance -= amount
+    db.add(models.GoalContribution(goal_id=goal.id, amount=amount))
     db.commit()
+
+
+def goal_projection(goal: models.Goal) -> salary.GoalProjection:
+    contributions = [{"amount": c.amount, "date": c.created_at.date()} for c in goal.contributions]
+    # Rows added before this feature existed may have no created_at on file;
+    # fall back to "old enough that only the recent pace window matters".
+    created = (
+        goal.created_at.date()
+        if goal.created_at is not None
+        else config.today() - timedelta(days=salary.PACE_WINDOW_DAYS)
+    )
+    return salary.goal_projection(
+        today=config.today(),
+        current_amount=goal.current_amount,
+        target_amount=goal.target_amount,
+        target_date=goal.target_date,
+        created_at=created,
+        contributions=contributions,
+    )
 
 
 def add_goal(db: Session, user: models.User, values: dict) -> models.Goal:
@@ -103,8 +148,7 @@ def add_goal(db: Session, user: models.User, values: dict) -> models.Goal:
 
 def update_goal(db: Session, goal: models.Goal, patch: dict) -> None:
     for k, v in patch.items():
-        if v is not None:
-            setattr(goal, k, v)
+        setattr(goal, k, v)
     db.commit()
 
 
@@ -121,6 +165,68 @@ def update_settings(db: Session, user: models.User, patch: dict) -> None:
     db.commit()
 
 
+def add_expense(
+    db: Session, user: models.User, amount: float, category: str, note: str, spent_at: str | None
+) -> models.Expense:
+    amount = max(round(amount), 0)
+    if amount <= 0:
+        raise ValueError("Сумма траты должна быть больше нуля")
+    expense = models.Expense(
+        user_id=user.telegram_id,
+        amount=amount,
+        category=(category or "").strip()[:50],
+        note=(note or "").strip()[:200],
+        spent_at=spent_at or config.today().isoformat(),
+    )
+    db.add(expense)
+    user.unallocated_balance -= amount
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+def delete_expense(db: Session, user: models.User, expense: models.Expense) -> None:
+    user.unallocated_balance += expense.amount
+    db.delete(expense)
+    db.commit()
+
+
+def add_fixed_cost(db: Session, user: models.User, name: str, amount: float, day: int) -> models.FixedCost:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Нужно название обязательного платежа")
+    amount = max(round(amount), 0)
+    if amount <= 0:
+        raise ValueError("Сумма платежа должна быть больше нуля")
+    day = min(max(int(day or 1), 1), 31)
+    cost = models.FixedCost(user_id=user.telegram_id, name=name[:100], amount=amount, day=day)
+    db.add(cost)
+    db.commit()
+    db.refresh(cost)
+    return cost
+
+
+def update_fixed_cost(db: Session, cost: models.FixedCost, patch: dict) -> None:
+    if patch.get("name") is not None:
+        name = str(patch["name"]).strip()
+        if not name:
+            raise ValueError("Нужно название обязательного платежа")
+        cost.name = name[:100]
+    if patch.get("amount") is not None:
+        amount = max(round(float(patch["amount"])), 0)
+        if amount <= 0:
+            raise ValueError("Сумма платежа должна быть больше нуля")
+        cost.amount = amount
+    if patch.get("day") is not None:
+        cost.day = min(max(int(patch["day"] or 1), 1), 31)
+    db.commit()
+
+
+def delete_fixed_cost(db: Session, cost: models.FixedCost) -> None:
+    db.delete(cost)
+    db.commit()
+
+
 def reset_all(db: Session, user: models.User) -> None:
     for s in list(user.shifts):
         db.delete(s)
@@ -128,6 +234,10 @@ def reset_all(db: Session, user: models.User) -> None:
         db.delete(t)
     for g in list(user.goals):
         db.delete(g)
+    for e in list(user.expenses):
+        db.delete(e)
+    for c in list(user.fixed_costs):
+        db.delete(c)
     user.rate = 8650
     user.default_advance = 80000
     user.unallocated_balance = 0
