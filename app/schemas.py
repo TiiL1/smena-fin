@@ -55,6 +55,14 @@ class ExpenseOut(CamelModel):
     spent_at: str
 
 
+class IncomeOut(CamelModel):
+    id: int
+    amount: float
+    source: str
+    note: str
+    received_at: str
+
+
 class FixedCostOut(CamelModel):
     id: int
     name: str
@@ -67,6 +75,7 @@ class StateOut(CamelModel):
     transactions: list[TransactionOut]
     goals: list[GoalOut]
     expenses: list[ExpenseOut]
+    incomes: list[IncomeOut]
     fixed_costs: list[FixedCostOut]
     unallocated_balance: float
     employer_debt: float
@@ -116,6 +125,13 @@ class ExpenseIn(CamelModel):
     category: str = ""
     note: str = ""
     spent_at: str | None = None  # 'YYYY-MM-DD', defaults to today
+
+
+class IncomeIn(CamelModel):
+    amount: float
+    source: str = ""
+    note: str = ""
+    received_at: str | None = None  # 'YYYY-MM-DD', defaults to today
 
 
 class FixedCostIn(CamelModel):

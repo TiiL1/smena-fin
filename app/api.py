@@ -39,6 +39,10 @@ def _state_out(user: models.User) -> schemas.StateOut:
             schemas.ExpenseOut.model_validate(e, from_attributes=True)
             for e in sorted(user.expenses, key=lambda x: (x.spent_at, x.id), reverse=True)[:200]
         ],
+        incomes=[
+            schemas.IncomeOut.model_validate(i, from_attributes=True)
+            for i in sorted(user.incomes, key=lambda x: (x.received_at, x.id), reverse=True)[:200]
+        ],
         fixed_costs=[
             schemas.FixedCostOut.model_validate(c, from_attributes=True)
             for c in sorted(user.fixed_costs, key=lambda x: (x.day, x.id))
@@ -61,6 +65,13 @@ def _get_expense_or_404(user: models.User, expense_id: int) -> models.Expense:
     if expense is None:
         raise HTTPException(status_code=404, detail="Трата не найдена")
     return expense
+
+
+def _get_income_or_404(user: models.User, income_id: int) -> models.Income:
+    income = next((i for i in user.incomes if i.id == income_id), None)
+    if income is None:
+        raise HTTPException(status_code=404, detail="Доход не найден")
+    return income
 
 
 def _get_fixed_cost_or_404(user: models.User, cost_id: int) -> models.FixedCost:
@@ -222,6 +233,34 @@ def delete_expense(
     user = crud.get_or_create_user(db, user_id)
     expense = _get_expense_or_404(user, expense_id)
     crud.delete_expense(db, user, expense)
+    db.refresh(user)
+    return _state_out(user)
+
+
+@router.post("/incomes", response_model=schemas.StateOut)
+def add_income(
+    body: schemas.IncomeIn,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    user = crud.get_or_create_user(db, user_id)
+    try:
+        crud.add_income(db, user, body.amount, body.source, body.note, body.received_at)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.refresh(user)
+    return _state_out(user)
+
+
+@router.delete("/incomes/{income_id}", response_model=schemas.StateOut)
+def delete_income(
+    income_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    user = crud.get_or_create_user(db, user_id)
+    income = _get_income_or_404(user, income_id)
+    crud.delete_income(db, user, income)
     db.refresh(user)
     return _state_out(user)
 

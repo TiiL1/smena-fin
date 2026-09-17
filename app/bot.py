@@ -17,6 +17,8 @@ router = Router()
 
 EXPENSE_RE = re.compile(r"^[−\-–]\s*(\d[\d\s]*)\s*(.*)$")
 KNOWN_CATEGORIES = ["еда", "транспорт", "жильё", "жилье", "кредит", "здоровье", "развлечения", "подписки"]
+INCOME_RE = re.compile(r"^[+＋]\s*(\d[\d\s]*)\s*(.*)$")
+KNOWN_SOURCES = ["курьерка", "такси", "подработка", "продажа", "подарок"]
 
 
 def _webapp_keyboard() -> InlineKeyboardMarkup | None:
@@ -42,9 +44,10 @@ async def on_start(message: Message) -> None:
     text = (
         "Привет! Это трекер смен и денег.\n\n"
         "Открывай приложение кнопкой ниже — там календарь смен, авансы/зарплата, "
-        "траты, прогноз баланса и копилки-цели.\n\n"
+        "траты, подработка, прогноз баланса и копилки-цели.\n\n"
         "Трату можно записать прямо сюда сообщением: <code>-3500 еда</code> — "
-        "сразу спишется со свободного баланса.\n\n"
+        "сразу спишется со свободного баланса.\n"
+        "Подработку — так же: <code>+15000 курьерка</code> — сразу упадёт в свободный баланс.\n\n"
         "25-го и 10-го напомню про выплату, а по понедельникам пришлю разбор недели."
     )
     await message.answer(text, reply_markup=_webapp_keyboard())
@@ -54,7 +57,8 @@ async def on_start(message: Message) -> None:
 async def on_help(message: Message) -> None:
     await message.answer(
         "/start — открыть приложение и включить напоминания.\n"
-        "Трата сообщением: <code>-3500 еда</code> или <code>-12000 кредит</code>."
+        "Трата сообщением: <code>-3500 еда</code> или <code>-12000 кредит</code>.\n"
+        "Доход сообщением: <code>+15000 курьерка</code> или <code>+8000 продажа</code>."
     )
 
 
@@ -100,6 +104,47 @@ async def on_expense_message(message: Message) -> None:
     )
 
 
+def _parse_income(text: str) -> tuple[int, str, str] | None:
+    """Parses `+15000 курьерка вечер` -> (15000, source, note). Returns None if not an income."""
+    m = INCOME_RE.match((text or "").strip())
+    if not m:
+        return None
+    amount = int(re.sub(r"\s+", "", m.group(1)))
+    if amount <= 0:
+        return None
+    rest = (m.group(2) or "").strip()
+    if not rest:
+        return amount, "", ""
+    first, _, tail = rest.partition(" ")
+    if first.lower() in KNOWN_SOURCES:
+        return amount, first.capitalize(), tail.strip()
+    return amount, "Другое", rest
+
+
+@router.message(F.text.regexp(r"^[+＋]\s*\d"))
+async def on_income_message(message: Message) -> None:
+    parsed = _parse_income(message.text or "")
+    if parsed is None:
+        return
+    amount, source, note = parsed
+    db = SessionLocal()
+    try:
+        user = crud.get_or_create_user(db, message.from_user.id)
+        user.started_bot = True
+        crud.add_income(db, user, amount, source, note, None)
+        balance = user.unallocated_balance
+        db.commit()
+    except ValueError as exc:
+        await message.answer(str(exc))
+        return
+    finally:
+        db.close()
+    label = f"{source}" + (f" · {note}" if note else "")
+    await message.answer(
+        f"Записал доход {format_money(amount)}" + (f" ({label})" if label else "") + f".\nСвободно: {format_money(balance)}."
+    )
+
+
 def create_bot() -> Bot:
     return Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
@@ -142,7 +187,7 @@ async def send_reminders(bot: Bot) -> int:
 
 
 def weekly_digest_text(user: models.User, today=None) -> str | None:
-    """Monday разбор: траты за 7 дней, темп, отставание от целей, что делать."""
+    """Monday разбор: траты и подработка за 7 дней, темп, отставание от целей, что делать."""
     from . import salary as salary_module
 
     today = today or config.today()
@@ -150,7 +195,9 @@ def weekly_digest_text(user: models.User, today=None) -> str | None:
     week_key = week_start.isoformat()
     week_expenses = [e for e in user.expenses if e.spent_at >= week_key]
     week_total = sum(e.amount for e in week_expenses)
-    if not week_expenses and not user.goals:
+    week_incomes = [i for i in user.incomes if i.received_at >= week_key]
+    week_earned = sum(i.amount for i in week_incomes)
+    if not week_expenses and not week_incomes and not user.goals:
         return None
     daily = week_total / 7
     lines = [f"Разбор недели · {format_money(week_total)} потрачено за 7 дней ({format_money(daily)}/день)."]
@@ -160,6 +207,14 @@ def weekly_digest_text(user: models.User, today=None) -> str | None:
             by_cat[e.category or "Другое"] = by_cat.get(e.category or "Другое", 0) + e.amount
         top = sorted(by_cat.items(), key=lambda kv: kv[1], reverse=True)[:3]
         lines.append("Куда ушло: " + ", ".join(f"{k} — {format_money(v)}" for k, v in top) + ".")
+    if week_incomes:
+        by_src: dict[str, float] = {}
+        for i in week_incomes:
+            by_src[i.source or "Другое"] = by_src.get(i.source or "Другое", 0) + i.amount
+        top_src = sorted(by_src.items(), key=lambda kv: kv[1], reverse=True)[0]
+        lines.append(
+            f"Подработка: {format_money(week_earned)} за 7 дней ({len(week_incomes)} зап., топ — {top_src[0]} {format_money(top_src[1])})."
+        )
     behind = []
     for g in user.goals:
         proj = crud.goal_projection(g)

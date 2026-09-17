@@ -25,6 +25,7 @@ class User(Base):
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     goals: Mapped[list["Goal"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     expenses: Mapped[list["Expense"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    incomes: Mapped[list["Income"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     fixed_costs: Mapped[list["FixedCost"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
@@ -102,6 +103,24 @@ class Expense(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     user: Mapped[User] = relationship(back_populates="expenses")
+
+
+class Income(Base):
+    """Side income (courier gig, sale, gift...): lands straight in the
+    unallocated balance, separate from salary payouts on purpose — payouts
+    carry forMonth/debt logic that gig money must never touch."""
+
+    __tablename__ = "incomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
+    amount: Mapped[float] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(50), default="")
+    note: Mapped[str] = mapped_column(String(200), default="")
+    received_at: Mapped[str] = mapped_column(String(10))  # 'YYYY-MM-DD'
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    user: Mapped[User] = relationship(back_populates="incomes")
 
 
 class FixedCost(Base):

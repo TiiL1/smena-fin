@@ -351,3 +351,60 @@ def test_withdraw_goal_of_other_user_is_404():
         goal = next(g for g in r.json()["goals"] if g["currentAmount"] > 0)
         r = c.post(f"/api/goals/{goal['id']}/withdraw", json={"amount": 1000}, headers=h2)
         assert r.status_code == 404
+
+
+def test_income_flow_adds_to_balance_and_deletes_back():
+    with client() as c:
+        h = auth_header(USER + 23)
+        r = c.post(
+            "/api/incomes",
+            json={"amount": 15000, "source": "Курьерка", "note": "вечер"},
+            headers=h,
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert len(body["incomes"]) == 1
+        assert body["incomes"][0]["source"] == "Курьерка"
+        assert body["unallocatedBalance"] == 15000
+
+        income_id = body["incomes"][0]["id"]
+        r = c.delete(f"/api/incomes/{income_id}", headers=h)
+        body = r.json()
+        assert body["incomes"] == []
+        assert body["unallocatedBalance"] == 0
+
+
+def test_income_validation_rejects_zero_amount():
+    with client() as c:
+        h = auth_header(USER + 24)
+        r = c.post("/api/incomes", json={"amount": 0, "source": "Курьерка"}, headers=h)
+        assert r.status_code == 400
+
+
+def test_income_of_other_user_is_404():
+    with client() as c:
+        h1 = auth_header(USER + 25)
+        h2 = auth_header(USER + 26)
+        r = c.post("/api/incomes", json={"amount": 5000, "source": "Такси"}, headers=h1)
+        income_id = r.json()["incomes"][0]["id"]
+        r = c.delete(f"/api/incomes/{income_id}", headers=h2)
+        assert r.status_code == 404
+
+
+def test_income_money_flows_into_split():
+    with client() as c:
+        h = auth_header(USER + 27)
+        c.post("/api/incomes", json={"amount": 30000, "source": "Подработка"}, headers=h)
+        r = c.post("/api/split", headers=h)
+        body = r.json()
+        assert sum(g["currentAmount"] for g in body["goals"]) > 0
+
+
+def test_reset_clears_incomes():
+    with client() as c:
+        h = auth_header(USER + 28)
+        c.post("/api/incomes", json={"amount": 5000, "source": "Такси"}, headers=h)
+        r = c.post("/api/reset", headers=h)
+        body = r.json()
+        assert body["incomes"] == []
+        assert body["unallocatedBalance"] == 0

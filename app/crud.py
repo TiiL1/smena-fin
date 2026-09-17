@@ -206,6 +206,32 @@ def delete_expense(db: Session, user: models.User, expense: models.Expense) -> N
     db.commit()
 
 
+def add_income(
+    db: Session, user: models.User, amount: float, source: str, note: str, received_at: str | None
+) -> models.Income:
+    amount = max(round(amount), 0)
+    if amount <= 0:
+        raise ValueError("Сумма дохода должна быть больше нуля")
+    income = models.Income(
+        user_id=user.telegram_id,
+        amount=amount,
+        source=(source or "").strip()[:50],
+        note=(note or "").strip()[:200],
+        received_at=received_at or config.today().isoformat(),
+    )
+    db.add(income)
+    user.unallocated_balance += amount
+    db.commit()
+    db.refresh(income)
+    return income
+
+
+def delete_income(db: Session, user: models.User, income: models.Income) -> None:
+    user.unallocated_balance -= income.amount
+    db.delete(income)
+    db.commit()
+
+
 def add_fixed_cost(db: Session, user: models.User, name: str, amount: float, day: int) -> models.FixedCost:
     name = (name or "").strip()
     if not name:
@@ -251,6 +277,8 @@ def reset_all(db: Session, user: models.User) -> None:
         db.delete(g)
     for e in list(user.expenses):
         db.delete(e)
+    for i in list(user.incomes):
+        db.delete(i)
     for c in list(user.fixed_costs):
         db.delete(c)
     user.rate = 8650
