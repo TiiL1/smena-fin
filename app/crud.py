@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from . import config, models, salary
+from . import categorize, config, models, salary
 
 
 def get_or_create_user(db: Session, telegram_id: int) -> models.User:
@@ -181,15 +181,25 @@ def update_settings(db: Session, user: models.User, patch: dict) -> None:
 
 
 def add_expense(
-    db: Session, user: models.User, amount: float, category: str, note: str, spent_at: str | None
+    db: Session,
+    user: models.User,
+    amount: float,
+    category: str,
+    note: str,
+    spent_at: str | None,
+    tag: str | None = None,
 ) -> models.Expense:
     amount = max(round(amount), 0)
     if amount <= 0:
         raise ValueError("Сумма траты должна быть больше нуля")
+    # Категорию и метку выводим из текста: «проезд автобус» -> Транспорт/Автобус.
+    # Явно выбранная пользователем категория побеждает, метка всё равно уточняется.
+    auto_category, auto_tag = categorize.categorize_expense(note, category)
     expense = models.Expense(
         user_id=user.telegram_id,
         amount=amount,
-        category=(category or "").strip()[:50],
+        category=auto_category[:50],
+        tag=((tag or "").strip() or auto_tag)[:50],
         note=(note or "").strip()[:200],
         spent_at=spent_at or config.today().isoformat(),
     )
@@ -207,15 +217,23 @@ def delete_expense(db: Session, user: models.User, expense: models.Expense) -> N
 
 
 def add_income(
-    db: Session, user: models.User, amount: float, source: str, note: str, received_at: str | None
+    db: Session,
+    user: models.User,
+    amount: float,
+    source: str,
+    note: str,
+    received_at: str | None,
+    tag: str | None = None,
 ) -> models.Income:
     amount = max(round(amount), 0)
     if amount <= 0:
         raise ValueError("Сумма дохода должна быть больше нуля")
+    auto_source, auto_tag = categorize.categorize_income(note, source)
     income = models.Income(
         user_id=user.telegram_id,
         amount=amount,
-        source=(source or "").strip()[:50],
+        source=auto_source[:50],
+        tag=((tag or "").strip() or auto_tag)[:50],
         note=(note or "").strip()[:200],
         received_at=received_at or config.today().isoformat(),
     )

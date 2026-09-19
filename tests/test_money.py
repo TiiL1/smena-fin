@@ -14,7 +14,10 @@ def test_parse_expense_amount_only():
 
 
 def test_parse_expense_unknown_category_goes_to_other():
-    assert _parse_expense("-1200 такси до работы") == (1200, "Другое", "такси до работы")
+    # Неизвестная категория целиком уходит в заметку, а настоящая
+    # категоризация (Транспорт / такси) происходит позже в crud через
+    # app.categorize — чтобы поддержка меток была в одном месте.
+    assert _parse_expense("-1200 такси до работы") == (1200, "", "такси до работы")
 
 
 def test_parse_expense_rejects_plain_text():
@@ -31,7 +34,7 @@ def test_parse_income_amount_only():
 
 
 def test_parse_income_unknown_source_goes_to_other():
-    assert _parse_income("+5000 фриланс сайт") == (5000, "Другое", "фриланс сайт")
+    assert _parse_income("+5000 фриланс сайт") == (5000, "", "фриланс сайт")
 
 
 def test_parse_income_rejects_plain_text():

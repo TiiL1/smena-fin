@@ -63,7 +63,12 @@ async def on_help(message: Message) -> None:
 
 
 def _parse_expense(text: str) -> tuple[int, str, str] | None:
-    """Parses `-3500 еда обед` -> (3500, category, note). Returns None if not an expense."""
+    """Parses `-3500 еда обед` -> (3500, category, note).
+
+    Весь текст после суммы остаётся заметкой, а категорию и метку потом выводит
+    app.categorize — поэтому «-110 проезд автобус» попадёт в Транспорт/Автобус,
+    а «-1526 свидание» в Развлечения/Свидание без ручного выбора.
+    """
     m = EXPENSE_RE.match((text or "").strip())
     if not m:
         return None
@@ -76,8 +81,8 @@ def _parse_expense(text: str) -> tuple[int, str, str] | None:
     first, _, tail = rest.partition(" ")
     if first.lower() in KNOWN_CATEGORIES:
         category = "Жильё" if first.lower() in ("жильё", "жилье") else first.capitalize()
-        return amount, category, tail.strip()
-    return amount, "Другое", rest
+        return amount, category, tail.strip() or first.capitalize()
+    return amount, "", rest
 
 
 @router.message(F.text.regexp(r"^[−\-–]\s*\d"))
@@ -85,27 +90,38 @@ async def on_expense_message(message: Message) -> None:
     parsed = _parse_expense(message.text or "")
     if parsed is None:
         return
-    amount, category, note = parsed
+    amount, category, rest_note = parsed
+    # Весь текст после суммы — целиком в note, чтобы бэк сохранил метку типа
+    # «Автобус» или «Ресторан» внутри категории.
+    note = rest_note
     db = SessionLocal()
     try:
         user = crud.get_or_create_user(db, message.from_user.id)
         user.started_bot = True
-        crud.add_expense(db, user, amount, category, note, None)
+        exp = crud.add_expense(db, user, amount, category, note, None)
         balance = user.unallocated_balance
+        shown_category = exp.category or category
+        shown_tag = exp.tag
         db.commit()
     except ValueError as exc:
         await message.answer(str(exc))
         return
     finally:
         db.close()
-    label = f"{category}" + (f" · {note}" if note else "")
+    # Пример: «Записал Транспорт · Автобус · проезд автобус — 110 ₸»
+    parts = [p for p in [shown_category, shown_tag, note] if p]
+    # Не дублируем tag, если он уже совпадает с заметкой.
+    if shown_tag and note and shown_tag.lower() == note.strip().lower():
+        parts = [shown_category, note] if shown_category else [shown_tag]
+    label = " · ".join([p for p in parts if p])
     await message.answer(
-        f"Записал трату {format_money(amount)}" + (f" ({label})" if label else "") + f".\nСвободно осталось: {format_money(balance)}."
+        f"Записал {format_money(amount)}" + (f" ({label})" if label else "") + f".\nСвободно осталось: {format_money(balance)}."
     )
 
 
 def _parse_income(text: str) -> tuple[int, str, str] | None:
-    """Parses `+15000 курьерка вечер` -> (15000, source, note). Returns None if not an income."""
+    """Parses `+15000 курьерка вечер` -> (15000, source, note). Весь текст
+    остаётся заметкой, категоризация — в app.categorize."""
     m = INCOME_RE.match((text or "").strip())
     if not m:
         return None
@@ -117,8 +133,8 @@ def _parse_income(text: str) -> tuple[int, str, str] | None:
         return amount, "", ""
     first, _, tail = rest.partition(" ")
     if first.lower() in KNOWN_SOURCES:
-        return amount, first.capitalize(), tail.strip()
-    return amount, "Другое", rest
+        return amount, first.capitalize(), tail.strip() or first.capitalize()
+    return amount, "", rest
 
 
 @router.message(F.text.regexp(r"^[+＋]\s*\d"))
@@ -126,20 +142,26 @@ async def on_income_message(message: Message) -> None:
     parsed = _parse_income(message.text or "")
     if parsed is None:
         return
-    amount, source, note = parsed
+    amount, source, rest_note = parsed
+    note = rest_note
     db = SessionLocal()
     try:
         user = crud.get_or_create_user(db, message.from_user.id)
         user.started_bot = True
-        crud.add_income(db, user, amount, source, note, None)
+        inc = crud.add_income(db, user, amount, source, note, None)
         balance = user.unallocated_balance
+        shown_source = inc.source or source
+        shown_tag = inc.tag
         db.commit()
     except ValueError as exc:
         await message.answer(str(exc))
         return
     finally:
         db.close()
-    label = f"{source}" + (f" · {note}" if note else "")
+    parts = [p for p in [shown_source, shown_tag, note] if p]
+    if shown_tag and note and shown_tag.lower() == note.strip().lower():
+        parts = [shown_source, note] if shown_source else [shown_tag]
+    label = " · ".join([p for p in parts if p])
     await message.answer(
         f"Записал доход {format_money(amount)}" + (f" ({label})" if label else "") + f".\nСвободно: {format_money(balance)}."
     )

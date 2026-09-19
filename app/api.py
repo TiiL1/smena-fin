@@ -217,7 +217,7 @@ def add_expense(
 ):
     user = crud.get_or_create_user(db, user_id)
     try:
-        crud.add_expense(db, user, body.amount, body.category, body.note, body.spent_at)
+        crud.add_expense(db, user, body.amount, body.category, body.note, body.spent_at, body.tag)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.refresh(user)
@@ -245,7 +245,7 @@ def add_income(
 ):
     user = crud.get_or_create_user(db, user_id)
     try:
-        crud.add_income(db, user, body.amount, body.source, body.note, body.received_at)
+        crud.add_income(db, user, body.amount, body.source, body.note, body.received_at, body.tag)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.refresh(user)

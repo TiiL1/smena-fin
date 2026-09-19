@@ -98,6 +98,7 @@ class Expense(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
     amount: Mapped[float] = mapped_column(Float)
     category: Mapped[str] = mapped_column(String(50), default="")
+    tag: Mapped[str] = mapped_column(String(50), default="")  # уточнение внутри категории
     note: Mapped[str] = mapped_column(String(200), default="")
     spent_at: Mapped[str] = mapped_column(String(10))  # 'YYYY-MM-DD'
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
@@ -116,6 +117,7 @@ class Income(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
     amount: Mapped[float] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(50), default="")
+    tag: Mapped[str] = mapped_column(String(50), default="")  # уточнение внутри источника
     note: Mapped[str] = mapped_column(String(200), default="")
     received_at: Mapped[str] = mapped_column(String(10))  # 'YYYY-MM-DD'
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

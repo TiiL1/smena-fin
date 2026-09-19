@@ -51,6 +51,7 @@ class ExpenseOut(CamelModel):
     id: int
     amount: float
     category: str
+    tag: str = ""
     note: str
     spent_at: str
 
@@ -59,6 +60,7 @@ class IncomeOut(CamelModel):
     id: int
     amount: float
     source: str
+    tag: str = ""
     note: str
     received_at: str
 
@@ -123,6 +125,7 @@ class SettingsPatchIn(CamelModel):
 class ExpenseIn(CamelModel):
     amount: float
     category: str = ""
+    tag: str | None = None  # если пусто — выведем автоматом
     note: str = ""
     spent_at: str | None = None  # 'YYYY-MM-DD', defaults to today
 
@@ -130,6 +133,7 @@ class ExpenseIn(CamelModel):
 class IncomeIn(CamelModel):
     amount: float
     source: str = ""
+    tag: str | None = None
     note: str = ""
     received_at: str | None = None  # 'YYYY-MM-DD', defaults to today
 
