@@ -51,7 +51,7 @@ class ExpenseOut(CamelModel):
     id: int
     amount: float
     category: str
-    tag: str = ""
+    tag: str | None = None
     note: str
     spent_at: str
 
@@ -60,7 +60,7 @@ class IncomeOut(CamelModel):
     id: int
     amount: float
     source: str
-    tag: str = ""
+    tag: str | None = None
     note: str
     received_at: str
 

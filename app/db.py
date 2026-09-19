@@ -56,8 +56,24 @@ def _add_missing_columns(target_engine=None) -> None:
                     )
 
 
+def _repair_null_tags() -> None:
+    """Колонка `tag` (expenses/incomes) была введена миграцией позже остальных:
+    старые строки на проде получили NULL вместо "". Приводим их к "" (идемпотентно)."""
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    for table in ("expenses", "incomes"):
+        if table not in table_names:
+            continue
+        existing = {c["name"] for c in inspector.get_columns(table)}
+        if "tag" not in existing:
+            continue
+        with engine.begin() as conn:
+            conn.execute(text(f'UPDATE "{table}" SET "tag" = \'\' WHERE "tag" IS NULL'))
+
+
 def init_db() -> None:
     from . import models  # noqa: F401  (ensure models are registered)
 
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
+    _repair_null_tags()

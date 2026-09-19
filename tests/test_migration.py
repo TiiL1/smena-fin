@@ -42,3 +42,62 @@ def test_add_missing_columns_extends_an_existing_table_in_place():
     assert row[2] is not None  # datetime field: backfilled instead of left NULL
 
     assert "goal_contributions" in inspector.get_table_names()
+
+
+def _create_legacy_expenses_incomes(conn, engine):
+    """Legacy tables created without the `tag` column (tag was added later by
+    _add_missing_columns on production, leaving NULL for pre-existing rows)."""
+    conn.execute(
+        text(
+            "CREATE TABLE expenses ("
+            "id INTEGER PRIMARY KEY, user_id INTEGER, amount FLOAT, "
+            "category VARCHAR(50), note VARCHAR(200), spent_at VARCHAR(10))"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE TABLE incomes ("
+            "id INTEGER PRIMARY KEY, user_id INTEGER, amount FLOAT, "
+            "source VARCHAR(50), note VARCHAR(200), received_at VARCHAR(10))"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO expenses (id, user_id, amount, category, note, spent_at) "
+            "VALUES (1, 111, 1000, 'Еда', 'note', '2025-01-10')"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO incomes (id, user_id, amount, source, note, received_at) "
+            "VALUES (1, 111, 5000, 'Подработка', 'note', '2025-01-10')"
+        )
+    )
+
+
+def test_migration_leaves_null_tags_which_repair_fixes(monkeypatch):
+    path = tempfile.mktemp(suffix=".db")
+    isolated_engine = create_engine(f"sqlite:///{path}")
+
+    with isolated_engine.begin() as conn:
+        _create_legacy_expenses_incomes(conn, isolated_engine)
+
+    db_module.Base.metadata.create_all(bind=isolated_engine)
+    db_module._add_missing_columns(isolated_engine)
+
+    with isolated_engine.begin() as conn:
+        rows = conn.execute(text("SELECT tag FROM expenses")).fetchall()
+        assert rows == [(None,)]
+        rows = conn.execute(text("SELECT tag FROM incomes")).fetchall()
+        assert rows == [(None,)]
+
+    # Repair is written against the app-global engine, so point it at the
+    # isolated engine to verify it rewrites the NULLs.
+    monkeypatch.setattr(db_module, "engine", isolated_engine)
+    db_module._repair_null_tags()
+
+    with isolated_engine.begin() as conn:
+        rows = conn.execute(text("SELECT tag FROM expenses")).fetchall()
+        assert rows == [("",)]
+        rows = conn.execute(text("SELECT tag FROM incomes")).fetchall()
+        assert rows == [("",)]

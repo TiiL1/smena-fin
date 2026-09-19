@@ -26,6 +26,22 @@ def test_state_requires_auth():
         assert r.status_code == 401
 
 
+def test_legacy_null_tag_rows_are_schema_tolerant():
+    # На проде `tag` колонку добавила миграция (_add_missing_columns), поэтому у
+    # старых расходов/доходов в СУБД хранится NULL, а не "". Схема вывода обязана
+    # пережить такие строки — до фикса Pydantic ронял /api/state с ValidationError.
+    from app import schemas
+
+    out = schemas.ExpenseOut.model_validate(
+        {"id": 1, "amount": 1000, "category": "Еда", "tag": None, "note": "", "spentAt": "2025-01-10"}
+    )
+    assert out.tag is None
+    out = schemas.IncomeOut.model_validate(
+        {"id": 1, "amount": 5000, "source": "Подработка", "tag": None, "note": "", "receivedAt": "2025-01-10"}
+    )
+    assert out.tag is None
+
+
 def test_new_user_gets_default_goals_and_settings():
     with client() as c:
         r = c.get("/api/state", headers=auth_header(USER))
