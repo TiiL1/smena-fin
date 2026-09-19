@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -52,6 +53,9 @@ app.include_router(api.router)
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     log.exception("Unhandled error on %s %s", request.method, request.url.path)
+    # Временная диагностика: отдаём текст ошибки клиенту, чтобы найти причину 500.
+    if os.environ.get("DEBUG_ERRORS") == "1":
+        return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
     return JSONResponse(status_code=500, content={"detail": "Внутренняя ошибка сервера"})
 
 
