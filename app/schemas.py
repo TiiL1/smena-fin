@@ -165,3 +165,46 @@ class BudgetIn(CamelModel):
 class BudgetPatchIn(CamelModel):
     category: str | None = None
     limit: float | None = None
+
+
+class FamilyOut(CamelModel):
+    id: int
+    name: str
+    creator_id: int
+    members: list["UserShortOut"]
+
+
+class UserShortOut(CamelModel):
+    telegram_id: int
+    name: str | None = None
+
+
+class FamilyGoalOut(CamelModel):
+    id: int
+    name: str
+    icon: str
+    target_amount: float
+    current_amount: float
+    target_date: str | None
+    family_id: int
+    contributions_by_user: list["FamilyContributionOut"]
+
+
+class FamilyContributionOut(CamelModel):
+    user_id: int
+    amount: float
+    created_at: datetime
+
+
+class FamilyGoalIn(CamelModel):
+    name: str
+    icon: str
+    target_amount: float
+    target_date: str | None = None
+
+
+class FamilyGoalPatchIn(CamelModel):
+    name: str | None = None
+    icon: str | None = None
+    target_amount: float | None = None
+    target_date: str | None = None

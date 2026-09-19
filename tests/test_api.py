@@ -408,3 +408,61 @@ def test_reset_clears_incomes():
         body = r.json()
         assert body["incomes"] == []
         assert body["unallocatedBalance"] == 0
+
+
+def test_family_full_flow():
+    with client() as c:
+        h1 = auth_header(USER + 40)
+        h2 = auth_header(USER + 41)
+
+        # не в семье — family null, инвайтов нет
+        assert c.get("/api/family", headers=h1).json()["family"] is None
+        assert c.get("/api/family/invites", headers=h1).json()["invites"] == []
+
+        # создание
+        r = c.post("/api/family/create", json={"name": "Тест-семья"}, headers=h1)
+        assert r.status_code == 200
+        family_id = r.json()["family"]["id"]
+
+        # второй раз создать нельзя
+        assert c.post("/api/family/create", json={"name": "Дубль"}, headers=h1).status_code == 400
+
+        # инвайт без участников из семьи
+        r = c.post("/api/family/invite", json={"inviteeTelegramId": USER + 41}, headers=h2)
+        assert r.status_code == 400
+
+        # инвайт
+        assert c.post("/api/family/invite", json={"inviteeTelegramId": USER + 41}, headers=h1).status_code == 200
+
+        # у приглашённого видно входящее приглашение
+        invs = c.get("/api/family/invites", headers=h2).json()["invites"]
+        assert len(invs) == 1
+        assert invs[0]["familyId"] == family_id
+
+        # принять
+        r = c.post("/api/family/accept", json={"familyId": family_id}, headers=h2)
+        assert r.status_code == 200
+        assert len(r.json()["family"]["members"]) == 2
+
+        # теперь инвайты пусты
+        assert c.get("/api/family/invites", headers=h2).json()["invites"] == []
+
+        # участник создаёт цель и пополняет её
+        r = c.post("/api/family/goals", json={"name": "Общая цель", "icon": "home", "targetAmount": 1_000_000}, headers=h2)
+        assert r.status_code == 200
+        goal_id = r.json()["id"]
+
+        c.post("/api/incomes", json={"amount": 20000, "source": "Тест"}, headers=h2)
+        balance = c.get("/api/state", headers=h2).json()["unallocatedBalance"]
+
+        r = c.post(f"/api/family/goals/{goal_id}/topup", json={"amount": 5000}, headers=h2)
+        assert r.status_code == 200
+        assert r.json()["currentAmount"] > 0
+
+        # чужая семья не трогается
+        h3 = auth_header(USER + 42)
+        assert c.post(f"/api/family/goals/{goal_id}/topup", json={"amount": 100}, headers=h3).status_code == 403
+
+        # выход
+        assert c.post("/api/family/leave", headers=h2).status_code == 200
+        assert c.get("/api/family", headers=h2).json()["family"] is None

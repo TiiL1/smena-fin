@@ -325,6 +325,121 @@ def delete_budget(db: Session, budget: models.Budget) -> None:
     db.commit()
 
 
+# ── Семья ──────────────────────────────────────────────────────────
+
+
+def create_family(db: Session, creator_id: int, name: str) -> models.Family:
+    name = (name or "").strip()[:100] or "Семья"
+    user = get_or_create_user(db, creator_id)
+    if user.family_id:
+        raise ValueError("Вы уже в семье")
+    family = models.Family(name=name, creator_id=creator_id)
+    db.add(family)
+    db.flush()
+    user.family_id = family.id
+    db.commit()
+    db.refresh(family)
+    return family
+
+
+def join_family(db: Session, user_id: int, family_id: int) -> models.Family:
+    user = get_or_create_user(db, user_id)
+    if user.family_id:
+        raise ValueError("Вы уже в семье")
+    family = db.get(models.Family, family_id)
+    if not family:
+        raise ValueError("Семья не найдена")
+    # Проверяем — есть ли инвайт для этого юзера
+    invite = next(
+        (inv for inv in family.invites if inv.invitee_id == user_id and inv.status == "pending"),
+        None,
+    )
+    if not invite:
+        raise ValueError("Приглашение не найдено или уже обработано")
+    invite.status = "accepted"
+    user.family_id = family.id
+    db.commit()
+    db.refresh(family)
+    return family
+
+
+def leave_family(db: Session, user_id: int) -> None:
+    user = db.get(models.User, user_id)
+    if not user or not user.family_id:
+        raise ValueError("Вы не в семье")
+    family_id = user.family_id
+    user.family_id = None
+    db.commit()
+    # Если семья опустела — удаляем её
+    family = db.get(models.Family, family_id)
+    if family and not family.members:
+        db.delete(family)
+        db.commit()
+
+
+def invite_to_family(db: Session, inviter_id: int, invitee_id: int) -> models.FamilyInvite:
+    inviter = db.get(models.User, inviter_id)
+    if not inviter or not inviter.family_id:
+        raise ValueError("Вы не в семье — создайте её или вступите")
+    invitee = get_or_create_user(db, invitee_id)
+    # Уже в семье?
+    if invitee.family_id:
+        raise ValueError("Пользователь уже в семье")
+    # Уже есть pending?
+    for inv in inviter.family.invites:
+        if inv.invitee_id == invitee_id and inv.status == "pending":
+            raise ValueError("Приглашение уже отправлено")
+    invite = models.FamilyInvite(
+        family_id=inviter.family_id,
+        inviter_id=inviter_id,
+        invitee_id=invitee_id,
+        status="pending",
+    )
+    db.add(invite)
+    db.commit()
+    db.refresh(invite)
+    return invite
+
+
+def get_family(db: Session, user_id: int) -> models.Family | None:
+    user = db.get(models.User, user_id)
+    if not user or not user.family_id:
+        return None
+    return db.get(models.Family, user.family_id)
+
+
+def get_family_goals(db: Session, family_id: int) -> list[models.FamilyGoal]:
+    return db.query(models.FamilyGoal).filter(models.FamilyGoal.family_id == family_id).all()
+
+
+def create_family_goal(db: Session, family_id: int, name: str, icon: str, target_amount: float, target_date: str | None) -> models.FamilyGoal:
+    name = (name or "").strip()[:100]
+    if not name:
+        raise ValueError("Нужно название цели")
+    if target_amount <= 0:
+        raise ValueError("Цель должна быть больше нуля")
+    goal = models.FamilyGoal(family_id=family_id, name=name, icon=icon, target_amount=target_amount, target_date=target_date)
+    db.add(goal)
+    db.commit()
+    db.refresh(goal)
+    return goal
+
+
+def topup_family_goal(db: Session, goal: models.FamilyGoal, user_id: int, amount: float) -> None:
+    amount = round(amount)
+    if amount <= 0:
+        raise ValueError("Сумма должна быть больше нуля")
+    user = db.get(models.User, user_id)
+    if not user:
+        raise ValueError("Пользователь не найден")
+    if amount > user.unallocated_balance:
+        raise ValueError("Недостаточно средств")
+    user.unallocated_balance -= amount
+    goal.current_amount += amount
+    db.add(models.FamilyGoalContribution(goal_id=goal.id, user_id=user_id, amount=amount))
+    db.commit()
+
+
 def reset_all(db: Session, user: models.User) -> None:
     for s in list(user.shifts):
         db.delete(s)

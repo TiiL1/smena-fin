@@ -9,3 +9,7 @@ os.environ["CRON_SECRET"] = "test-cron-secret"
 os.environ["TELEGRAM_WEBHOOK_SECRET"] = "test-webhook-secret"
 os.environ["WEBAPP_URL"] = "https://example.test"
 os.environ["DEV_AUTH"] = "0"
+
+from app.db import init_db  # noqa: E402
+
+init_db()

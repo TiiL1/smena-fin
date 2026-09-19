@@ -10,6 +10,70 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Family(Base):
+    """Семья — несколько пользователей с общими целями и общим резервом."""
+
+    __tablename__ = "families"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), default="Семья")
+    creator_id: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    members: Mapped[list["User"]] = relationship(back_populates="family", foreign_keys="User.family_id")
+    invites: Mapped[list["FamilyInvite"]] = relationship(back_populates="family", cascade="all, delete-orphan")
+    goals: Mapped[list["FamilyGoal"]] = relationship(back_populates="family", cascade="all, delete-orphan")
+
+
+class FamilyInvite(Base):
+    """Инвайт в семью: отправляется создателем, принимается приглашённым."""
+
+    __tablename__ = "family_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    family_id: Mapped[int] = mapped_column(Integer, ForeignKey("families.id"))
+    inviter_id: Mapped[int] = mapped_column(BigInteger)
+    invitee_id: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | accepted | declined
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    family: Mapped[Family] = relationship(back_populates="invites")
+
+
+class FamilyGoal(Base):
+    """Общая цель семьи: общий target, вклады от каждого участника."""
+
+    __tablename__ = "family_goals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    family_id: Mapped[int] = mapped_column(Integer, ForeignKey("families.id"))
+    name: Mapped[str] = mapped_column(String(100))
+    icon: Mapped[str] = mapped_column(String(30))
+    target_amount: Mapped[float] = mapped_column(Float)
+    current_amount: Mapped[float] = mapped_column(Float, default=0)
+    target_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    family: Mapped[Family] = relationship(back_populates="goals")
+    contributions: Mapped[list["FamilyGoalContribution"]] = relationship(
+        back_populates="goal", cascade="all, delete-orphan"
+    )
+
+
+class FamilyGoalContribution(Base):
+    """Вклад участника в общую цель."""
+
+    __tablename__ = "family_goal_contributions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    goal_id: Mapped[int] = mapped_column(Integer, ForeignKey("family_goals.id"))
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
+    amount: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    goal: Mapped[FamilyGoal] = relationship(back_populates="contributions")
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -19,8 +83,10 @@ class User(Base):
     default_advance: Mapped[float] = mapped_column(Float, default=80000)
     unallocated_balance: Mapped[float] = mapped_column(Float, default=0)
     employer_debt: Mapped[float] = mapped_column(Float, default=0)
+    family_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("families.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
+    family: Mapped["Family | None"] = relationship(back_populates="members", foreign_keys=[family_id])
     shifts: Mapped[list["Shift"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     goals: Mapped[list["Goal"]] = relationship(back_populates="user", cascade="all, delete-orphan")

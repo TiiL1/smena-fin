@@ -402,6 +402,144 @@ def delete_budget(
     return _state_out(user)
 
 
+# ── Семья ──────────────────────────────────────────────────────────
+
+
+def _family_goal_out(goal: models.FamilyGoal) -> dict:
+    return {
+        "id": goal.id,
+        "name": goal.name,
+        "icon": goal.icon,
+        "targetAmount": goal.target_amount,
+        "currentAmount": goal.current_amount,
+        "targetDate": goal.target_date,
+        "familyId": goal.family_id,
+        "contributions": [
+            {"userId": c.user_id, "amount": c.amount, "createdAt": c.created_at.isoformat()}
+            for c in goal.contributions
+        ],
+    }
+
+
+def _family_out(family: models.Family, db: Session) -> dict:
+    return {
+        "id": family.id,
+        "name": family.name,
+        "creatorId": family.creator_id,
+        "members": [{"telegramId": m.telegram_id, "name": str(m.telegram_id)} for m in family.members],
+        "goals": [_family_goal_out(g) for g in family.goals],
+        "invites": [
+            {"id": inv.id, "inviterId": inv.inviter_id, "inviteeId": inv.invitee_id, "status": inv.status}
+            for inv in family.invites
+            if inv.status == "pending"
+        ],
+    }
+
+
+@router.get("/family")
+def get_family(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    family = crud.get_family(db, user_id)
+    if not family:
+        return {"family": None}
+    return {"family": _family_out(family, db)}
+
+
+@router.post("/family/create")
+def create_family(body: dict, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    try:
+        family = crud.create_family(db, user_id, body.get("name") or "Семья")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"family": _family_out(family, db)}
+
+
+@router.post("/family/leave")
+def leave_family(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    try:
+        crud.leave_family(db, user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"family": None}
+
+
+@router.get("/family/invites")
+def get_incoming_invites(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    """Входящие ожидающие приглашения для текущего пользователя."""
+    invites = (
+        db.query(models.FamilyInvite)
+        .filter(models.FamilyInvite.invitee_id == user_id, models.FamilyInvite.status == "pending")
+        .all()
+    )
+    result = []
+    for inv in invites:
+        family = db.get(models.Family, inv.family_id)
+        result.append(
+            {
+                "id": inv.id,
+                "familyId": inv.family_id,
+                "familyName": family.name if family else "Семья",
+                "inviterId": inv.inviter_id,
+            }
+        )
+    return {"invites": result}
+
+
+@router.post("/family/invite")
+def invite_to_family(body: dict, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    try:
+        invite = crud.invite_to_family(db, user_id, int(body.get("inviteeTelegramId") or 0))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "inviteId": invite.id}
+
+
+@router.post("/family/accept")
+def accept_invite(body: dict, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    family_id = int(body.get("familyId") or 0)
+    try:
+        family = crud.join_family(db, user_id, family_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"family": _family_out(family, db)}
+
+
+# Семейные цели
+@router.get("/family/goals")
+def get_family_goals(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    family = crud.get_family(db, user_id)
+    if not family:
+        raise HTTPException(status_code=400, detail="Вы не в семье")
+    return {"goals": [_family_goal_out(g) for g in family.goals]}
+
+
+@router.post("/family/goals")
+def create_family_goal(body: schemas.FamilyGoalIn, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    family = crud.get_family(db, user_id)
+    if not family:
+        raise HTTPException(status_code=400, detail="Вы не в семье")
+    try:
+        goal = crud.create_family_goal(db, family.id, body.name, body.icon, body.target_amount, body.target_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _family_goal_out(goal)
+
+
+@router.post("/family/goals/{goal_id}/topup")
+def topup_family_goal(goal_id: int, body: schemas.TopUpIn, db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    goal = db.get(models.FamilyGoal, goal_id)
+    if not goal:
+        raise HTTPException(status_code=404, detail="Общая цель не найдена")
+    family = crud.get_family(db, user_id)
+    if not family or goal.family_id != family.id:
+        raise HTTPException(status_code=403, detail="Вы не участник этой семьи")
+    try:
+        crud.topup_family_goal(db, goal, user_id, body.amount)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.refresh(goal)
+    return _family_goal_out(goal)
+
+
 @router.post("/reset", response_model=schemas.StateOut)
 def reset_all(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     user = crud.get_or_create_user(db, user_id)
