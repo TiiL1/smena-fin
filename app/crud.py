@@ -286,6 +286,45 @@ def delete_fixed_cost(db: Session, cost: models.FixedCost) -> None:
     db.commit()
 
 
+def set_budget(db: Session, user: models.User, category: str, limit: float) -> models.Budget:
+    category = (category or "").strip()[:50]
+    limit = max(round(limit), 0)
+    if not category:
+        raise ValueError("Нужна категория")
+    if limit <= 0:
+        raise ValueError("Лимит должен быть больше нуля")
+    existing = next((b for b in user.budgets if b.category == category), None)
+    if existing:
+        existing.limit = limit
+        db.commit()
+        db.refresh(existing)
+        return existing
+    budget = models.Budget(user_id=user.telegram_id, category=category, limit=limit)
+    db.add(budget)
+    db.commit()
+    db.refresh(budget)
+    return budget
+
+
+def patch_budget(db: Session, budget: models.Budget, patch: dict) -> None:
+    if patch.get("category") is not None:
+        cat = str(patch["category"]).strip()[:50]
+        if not cat:
+            raise ValueError("Нужна категория")
+        budget.category = cat
+    if patch.get("limit") is not None:
+        lim = max(round(float(patch["limit"])), 0)
+        if lim <= 0:
+            raise ValueError("Лимит должен быть больше нуля")
+        budget.limit = lim
+    db.commit()
+
+
+def delete_budget(db: Session, budget: models.Budget) -> None:
+    db.delete(budget)
+    db.commit()
+
+
 def reset_all(db: Session, user: models.User) -> None:
     for s in list(user.shifts):
         db.delete(s)
@@ -299,6 +338,8 @@ def reset_all(db: Session, user: models.User) -> None:
         db.delete(i)
     for c in list(user.fixed_costs):
         db.delete(c)
+    for b in list(user.budgets):
+        db.delete(b)
     user.rate = 8650
     user.default_advance = 80000
     user.unallocated_balance = 0

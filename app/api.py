@@ -47,6 +47,10 @@ def _state_out(user: models.User) -> schemas.StateOut:
             schemas.FixedCostOut.model_validate(c, from_attributes=True)
             for c in sorted(user.fixed_costs, key=lambda x: (x.day, x.id))
         ],
+        budgets=[
+            schemas.BudgetOut.model_validate(b, from_attributes=True)
+            for b in sorted(user.budgets, key=lambda x: x.category)
+        ],
         unallocated_balance=user.unallocated_balance,
         employer_debt=user.employer_debt,
         settings=schemas.SettingsOut(rate=user.rate, default_advance=user.default_advance),
@@ -79,6 +83,13 @@ def _get_fixed_cost_or_404(user: models.User, cost_id: int) -> models.FixedCost:
     if cost is None:
         raise HTTPException(status_code=404, detail="Платёж не найден")
     return cost
+
+
+def _get_budget_or_404(user: models.User, budget_id: int) -> models.Budget:
+    budget = next((b for b in user.budgets if b.id == budget_id), None)
+    if budget is None:
+        raise HTTPException(status_code=404, detail="Бюджет не найден")
+    return budget
 
 
 @router.get("/health")
@@ -306,6 +317,87 @@ def delete_fixed_cost(
     user = crud.get_or_create_user(db, user_id)
     cost = _get_fixed_cost_or_404(user, cost_id)
     crud.delete_fixed_cost(db, cost)
+    db.refresh(user)
+    return _state_out(user)
+
+
+@router.get("/insights", response_model=dict)
+def insights(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    user = crud.get_or_create_user(db, user_id)
+    from .insights import generate_insight
+    from .config import today
+
+    month_key = today().isoformat()[:7]
+    total_spent = sum(e.amount for e in user.expenses if e.spent_at.startswith(month_key))
+    total_earned = sum(i.amount for i in user.incomes if i.received_at.startswith(month_key))
+
+    # Топ-категории за месяц
+    cat_map: dict[str, float] = {}
+    for e in user.expenses:
+        if not e.spent_at.startswith(month_key):
+            continue
+        cat_map[e.category or "Другое"] = (cat_map[e.category or "Другое"] or 0) + e.amount
+    top_categories = sorted([{"category": k, "amount": v, "delta_pct": None} for k, v in cat_map.items()], key=lambda x: -x["amount"])[:4]
+    savings_rate = (total_earned - total_spent) / total_earned if total_earned else None
+    fixed_total = sum(c.amount for c in user.fixed_costs)
+    goals_on_track = sum(1 for g in user.goals if crud.goal_projection(g).on_track is True)
+    goals_behind = sum(1 for g in user.goals if crud.goal_projection(g).on_track is False)
+
+    text = generate_insight(
+        user_id,
+        month_key,
+        total_spent=total_spent,
+        total_earned=total_earned,
+        top_categories=top_categories,
+        savings_rate=savings_rate,
+        fixed_total=fixed_total,
+        goals_on_track=goals_on_track,
+        goals_behind=goals_behind,
+    )
+    return {"text": text, "month": month_key}
+
+
+@router.post("/budgets", response_model=schemas.StateOut)
+def set_budget(
+    body: schemas.BudgetIn,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    user = crud.get_or_create_user(db, user_id)
+    try:
+        crud.set_budget(db, user, body.category, body.limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.refresh(user)
+    return _state_out(user)
+
+
+@router.patch("/budgets/{budget_id}", response_model=schemas.StateOut)
+def patch_budget(
+    budget_id: int,
+    body: schemas.BudgetPatchIn,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    user = crud.get_or_create_user(db, user_id)
+    budget = _get_budget_or_404(user, budget_id)
+    try:
+        crud.patch_budget(db, budget, body.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.refresh(user)
+    return _state_out(user)
+
+
+@router.delete("/budgets/{budget_id}", response_model=schemas.StateOut)
+def delete_budget(
+    budget_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    user = crud.get_or_create_user(db, user_id)
+    budget = _get_budget_or_404(user, budget_id)
+    crud.delete_budget(db, budget)
     db.refresh(user)
     return _state_out(user)
 

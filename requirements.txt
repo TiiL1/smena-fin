@@ -5,3 +5,4 @@ psycopg[binary]>=3.3,<4.0
 aiogram>=3.31,<4.0
 apscheduler>=3.11,<4.0
 python-dotenv>=1.2,<2.0
+httpx>=0.28,<1.0

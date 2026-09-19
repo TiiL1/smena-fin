@@ -72,6 +72,12 @@ class FixedCostOut(CamelModel):
     day: int
 
 
+class BudgetOut(CamelModel):
+    id: int
+    category: str
+    limit: float
+
+
 class StateOut(CamelModel):
     shifts: list[ShiftOut]
     transactions: list[TransactionOut]
@@ -79,6 +85,7 @@ class StateOut(CamelModel):
     expenses: list[ExpenseOut]
     incomes: list[IncomeOut]
     fixed_costs: list[FixedCostOut]
+    budgets: list[BudgetOut]
     unallocated_balance: float
     employer_debt: float
     settings: SettingsOut
@@ -148,3 +155,13 @@ class FixedCostPatchIn(CamelModel):
     name: str | None = None
     amount: float | None = None
     day: int | None = None
+
+
+class BudgetIn(CamelModel):
+    category: str
+    limit: float
+
+
+class BudgetPatchIn(CamelModel):
+    category: str | None = None
+    limit: float | None = None

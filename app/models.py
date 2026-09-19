@@ -27,6 +27,7 @@ class User(Base):
     expenses: Mapped[list["Expense"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     incomes: Mapped[list["Income"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     fixed_costs: Mapped[list["FixedCost"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    budgets: Mapped[list["Budget"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Shift(Base):
@@ -138,6 +139,22 @@ class FixedCost(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     user: Mapped[User] = relationship(back_populates="fixed_costs")
+
+
+class Budget(Base):
+    """Месячный лимит по категории трат: «Еда 30 000 ₸». На фронте — прогресс-бар
+    и предупреждение при 80%."""
+
+    __tablename__ = "budgets"
+    __table_args__ = (UniqueConstraint("user_id", "category", name="uq_budget_user_category"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.telegram_id"))
+    category: Mapped[str] = mapped_column(String(50))
+    limit: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    user: Mapped[User] = relationship(back_populates="budgets")
 
 
 DEFAULT_GOALS = [
