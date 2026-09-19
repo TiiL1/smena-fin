@@ -6,6 +6,7 @@ from aiogram.types import Update
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import JSONResponse
 
 from . import api, bot as bot_module, config
 from .db import init_db
@@ -46,6 +47,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(api.router)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    log.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Внутренняя ошибка сервера"})
 
 
 @app.post("/api/telegram/webhook")
